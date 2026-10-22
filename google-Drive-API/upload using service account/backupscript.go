@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/oauth2/google"
 	"golang.org/x/oauth2/jwt"
@@ -57,6 +58,32 @@ func createFile(service *drive.Service, name string, mimeType string, content io
 	return file, nil
 }
 
+func checkFolder(ctx context.Context, srv *drive.Service, folderID string) error {
+	folder, err := srv.Files.Get(folderID).
+		SupportsAllDrives(true).
+		Fields("id,name,mimeType,trashed,capabilities(canAddChildren)").
+		Context(ctx).
+		Do()
+
+	if err != nil {
+		return fmt.Errorf("cannot access folder %q: %w", folderID, err)
+	}
+
+	if folder.Trashed {
+		return fmt.Errorf("folder %q is in the trash", folder.Name)
+	}
+
+	if folder.MimeType != "application/vnd.google-apps.folder" {
+		return fmt.Errorf("ID %q is not a folder", folderID)
+	}
+
+	if folder.Capabilities == nil || !folder.Capabilities.CanAddChildren {
+		return fmt.Errorf("no permissions to upload into folder %q", folder.Name)
+	}
+
+	return nil
+}
+
 func main() {
 	// Step 1: Open  file
 	if len(os.Args) < 2 {
@@ -73,7 +100,7 @@ func main() {
 	if err != nil {
 		panic(fmt.Sprintf("cannot open file: %v", err))
 	} else {
-		fmt.Sprintf("File '%s' opened successfully", filename)
+		fmt.Printf("File '%s' opened successfully", filename)
 	}
 
 	defer f.Close()
@@ -95,6 +122,12 @@ func main() {
 	//give your folder id here in which you want to upload or create new directory
 	folderId := "1QQAZvPo7J76tluo7Q-zIYhkLpfyP3DFn"
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := checkFolder(ctx, srv, folderId); err != nil {
+		log.Fatal(err)
+	}
 	// Step 4: create the file and upload
 	file, err := createFile(srv, filepath.Base(filename), "application/octet-stream", f, folderId)
 
